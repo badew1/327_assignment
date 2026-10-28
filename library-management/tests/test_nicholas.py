@@ -1,5 +1,7 @@
 """Meaningful API tests for Nicholas's assigned library features."""
 
+from datetime import date
+
 
 def create_book(client, **overrides):
     """Create a book with valid defaults and return its JSON representation."""
@@ -11,6 +13,18 @@ def create_book(client, **overrides):
     }
     payload.update(overrides)
     response = client.post("/books", json=payload)
+    assert response.status_code == 201
+    return response.get_json()
+
+
+def create_member(client, **overrides):
+    """Create a member with valid defaults and return its JSON representation."""
+    payload = {
+        "name": "Maya Chen",
+        "email": "maya.chen@example.com",
+    }
+    payload.update(overrides)
+    response = client.post("/members", json=payload)
     assert response.status_code == 201
     return response.get_json()
 
@@ -114,3 +128,85 @@ def test_unknown_book_operations_return_not_found_without_changing_state(client)
     assert delete_response.status_code == 404
     assert delete_response.get_json() == {"error": "Book not found"}
     assert client.get("/books").get_json() == []
+
+
+def test_create_member_persists_complete_record(client):
+    """Creating a member stores identity fields and the membership date."""
+    created = create_member(client)
+
+    assert created == {
+        "id": 1,
+        "name": "Maya Chen",
+        "email": "maya.chen@example.com",
+        "membership_date": date.today().isoformat(),
+    }
+
+    get_response = client.get("/members/1")
+    assert get_response.status_code == 200
+    assert get_response.get_json() == created
+
+    list_response = client.get("/members")
+    assert list_response.status_code == 200
+    assert list_response.get_json() == [created]
+
+
+def test_multiple_members_receive_distinct_sequential_ids(client):
+    """Server-assigned IDs remain unique as multiple members are registered."""
+    first = create_member(client)
+    second = create_member(
+        client,
+        name="Jordan Patel",
+        email="jordan.patel@example.com",
+    )
+
+    assert first["id"] == 1
+    assert second["id"] == 2
+    assert first["id"] != second["id"]
+    assert client.get("/members").get_json() == [first, second]
+
+
+def test_update_member_changes_requested_field_and_preserves_others(client):
+    """A partial member update persists without replacing omitted fields."""
+    original = create_member(client)
+
+    update_response = client.put(
+        "/members/1",
+        json={"email": "maya.updated@example.com"},
+    )
+    assert update_response.status_code == 200
+    updated = update_response.get_json()
+    assert updated == {
+        **original,
+        "email": "maya.updated@example.com",
+    }
+
+    get_response = client.get("/members/1")
+    assert get_response.status_code == 200
+    assert get_response.get_json() == updated
+
+
+def test_delete_member_removes_it_from_subsequent_reads(client):
+    """Deleting a member removes both the detail and list representation."""
+    create_member(client)
+
+    delete_response = client.delete("/members/1")
+    assert delete_response.status_code == 204
+    assert delete_response.data == b""
+
+    assert client.get("/members/1").status_code == 404
+    assert client.get("/members").get_json() == []
+
+
+def test_unknown_member_operations_return_not_found_without_changing_state(client):
+    """Get, update, and delete reject a member ID that is not present."""
+    get_response = client.get("/members/999")
+    update_response = client.put("/members/999", json={"name": "Missing"})
+    delete_response = client.delete("/members/999")
+
+    assert get_response.status_code == 404
+    assert get_response.get_json() == {"error": "Member not found"}
+    assert update_response.status_code == 404
+    assert update_response.get_json() == {"error": "Member not found"}
+    assert delete_response.status_code == 404
+    assert delete_response.get_json() == {"error": "Member not found"}
+    assert client.get("/members").get_json() == []
