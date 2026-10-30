@@ -24,18 +24,26 @@ def list_loans():
 
 @loans_bp.route("", methods=["POST"])
 def checkout_book():
-    data = request.get_json()
-    book = store.books.get(data["book_id"])
+    data = request.get_json(silent=True) or {}
+    book_id = data.get("book_id")
+    member_id = data.get("member_id")
+    if not isinstance(book_id, int) or not isinstance(member_id, int):
+        return jsonify({"error": "book_id and member_id are required integers"}), 400
+
+    book = store.books.get(book_id)
     if book is None:
         return jsonify({"error": "Book not found"}), 404
+    if store.members.get(member_id) is None:
+        return jsonify({"error": "Member not found"}), 404
+    if book.available_copies < 1:
+        return jsonify({"error": "No copies available"}), 400
 
     book.available_copies -= 1
-
     loan_id = store.next_id("loan")
     loan = Loan(
         id=loan_id,
-        book_id=data["book_id"],
-        member_id=data["member_id"],
+        book_id=book_id,
+        member_id=member_id,
         due_date=Loan.default_due_date(),
     )
     store.loans[loan_id] = loan
