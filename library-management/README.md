@@ -53,7 +53,7 @@ app working without a REST client, and calls the same in-memory store.
 | DELETE | `/members/<id>` | Delete a member |
 | POST | `/loans` | Check out a book (`book_id`, `member_id`) |
 | PUT | `/loans/<id>/return` | Return a loaned book |
-| GET | `/loans?member_id=&book_id=` | Look up loans |
+| GET | `/loans?member_id=&book_id=&status=` | Filter loans by member, book, and history status (`all`, `active`, or `returned`); invalid filters return 400 |
 
 ## Tests
 
