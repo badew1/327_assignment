@@ -1,6 +1,6 @@
 """Meaningful API tests for Nicholas's assigned library features."""
 
-from datetime import date
+from datetime import date, timedelta
 
 
 def create_book(client, **overrides):
@@ -210,3 +210,97 @@ def test_unknown_member_operations_return_not_found_without_changing_state(clien
     assert delete_response.status_code == 404
     assert delete_response.get_json() == {"error": "Member not found"}
     assert client.get("/members").get_json() == []
+
+
+def test_checkout_and_return_updates_loan_and_book_state(client):
+    """A complete loan workflow updates dates and available-copy counts."""
+    create_book(client)
+    create_member(client)
+
+    checkout_response = client.post(
+        "/loans",
+        json={"book_id": 1, "member_id": 1},
+    )
+    assert checkout_response.status_code == 201
+    loan = checkout_response.get_json()
+    assert loan == {
+        "id": 1,
+        "book_id": 1,
+        "member_id": 1,
+        "loan_date": date.today().isoformat(),
+        "due_date": (date.today() + timedelta(days=14)).isoformat(),
+        "return_date": None,
+    }
+    assert client.get("/books/1").get_json()["available_copies"] == 1
+    assert client.get("/loans").get_json() == [loan]
+
+    return_response = client.put("/loans/1/return")
+    assert return_response.status_code == 200
+    returned_loan = return_response.get_json()
+    assert returned_loan["return_date"] == date.today().isoformat()
+    assert client.get("/books/1").get_json()["available_copies"] == 2
+
+    repeated_return = client.put("/loans/1/return")
+    assert repeated_return.status_code == 400
+    assert repeated_return.get_json() == {"error": "Loan already returned"}
+    assert client.get("/books/1").get_json()["available_copies"] == 2
+
+
+def test_checkout_unknown_book_returns_not_found_without_creating_loan(client):
+    """Checkout rejects a missing book and leaves the loan collection empty."""
+    create_member(client)
+
+    response = client.post(
+        "/loans",
+        json={"book_id": 999, "member_id": 1},
+    )
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Book not found"}
+    assert client.get("/loans").get_json() == []
+
+
+def test_checkout_rejects_book_when_no_copies_are_available(client):
+    """A one-copy book cannot have two simultaneous active loans."""
+    create_book(client, total_copies=1)
+    create_member(client)
+    create_member(
+        client,
+        name="Jordan Patel",
+        email="jordan.patel@example.com",
+    )
+    first_checkout = client.post(
+        "/loans",
+        json={"book_id": 1, "member_id": 1},
+    )
+    assert first_checkout.status_code == 201
+    assert client.get("/books/1").get_json()["available_copies"] == 0
+
+    second_checkout = client.post(
+        "/loans",
+        json={"book_id": 1, "member_id": 2},
+    )
+
+    observed = (
+        second_checkout.status_code,
+        client.get("/books/1").get_json()["available_copies"],
+        len(client.get("/loans").get_json()),
+    )
+    assert observed == (400, 0, 1)
+
+
+def test_checkout_rejects_unknown_member_without_changing_book_state(client):
+    """A loan must reference an existing member before availability is changed."""
+    create_book(client, total_copies=1)
+
+    response = client.post(
+        "/loans",
+        json={"book_id": 1, "member_id": 999},
+    )
+
+    observed = (
+        response.status_code,
+        client.get("/books/1").get_json()["available_copies"],
+        client.get("/loans").get_json(),
+    )
+    assert observed == (404, 1, [])
