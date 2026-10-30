@@ -51,12 +51,12 @@ app working without a REST client, and calls the same in-memory store.
 | GET | `/members/<id>` | Get one member |
 | PUT | `/members/<id>` | Update a member |
 | DELETE | `/members/<id>` | Delete a member |
-| POST | `/loans` | Check out a book (`book_id`, `member_id`) |
+| POST | `/loans` | Check out a book (`book_id`, `member_id`) Returns 201 with the loan. Returns 400 if either ID is missing or not an integer, or if no copies are available. Returns 404 if the book or member does not exist. A rejected request changes no data. |
 | PUT | `/loans/<id>/return` | Return a loaned book |
 | GET | `/loans?member_id=&book_id=&status=` | Filter loans by member, book, and history status (`all`, `active`, or `returned`); invalid filters return 400 |
 
 ## Tests
 
 ```bash
-pytest
+python -m pytest
 ```
