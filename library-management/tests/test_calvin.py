@@ -168,3 +168,71 @@ def test_checkout_return_checkout_cycle(client):
     r = checkout(client, book["id"], m2["id"])
     assert r.status_code == 201
     assert available(client, book["id"]) == 0
+
+# renew a loan
+def test_renew_extends_due_date_by_loan_period(client):
+    book, member = make_book(client), make_member(client)
+    loan = checkout(client, book["id"], member["id"]).get_json()
+    old_due = date.fromisoformat(loan["due_date"])
+
+    r = client.put(f"/loans/{loan['id']}/renew")
+    assert r.status_code == 200
+    new_due = date.fromisoformat(r.get_json()["due_date"])
+    assert new_due == old_due + timedelta(days=LOAN_PERIOD_DAYS)
+
+    stored = client.get("/loans").get_json()[0]
+    assert stored["due_date"] == new_due.isoformat()
+
+
+def test_renew_twice_extends_cumulatively(client):
+    book, member = make_book(client), make_member(client)
+    loan = checkout(client, book["id"], member["id"]).get_json()
+    old_due = date.fromisoformat(loan["due_date"])
+    client.put(f"/loans/{loan['id']}/renew")
+    r = client.put(f"/loans/{loan['id']}/renew")
+    assert date.fromisoformat(r.get_json()["due_date"]) == \
+        old_due + timedelta(days=2 * LOAN_PERIOD_DAYS)
+
+
+def test_renew_returned_loan_rejected(client):
+    book, member = make_book(client), make_member(client)
+    loan = checkout(client, book["id"], member["id"]).get_json()
+    client.put(f"/loans/{loan['id']}/return")
+    assert client.put(f"/loans/{loan['id']}/renew").status_code == 400
+
+
+def test_renew_nonexistent_loan_returns_404(client):
+    assert client.put("/loans/999/renew").status_code == 404
+
+
+# overdue fine
+def test_fine_is_zero_when_not_overdue(client):
+    book, member = make_book(client), make_member(client)
+    loan = checkout(client, book["id"], member["id"]).get_json()
+    r = client.get(f"/loans/{loan['id']}/fine")
+    assert r.status_code == 200
+    assert r.get_json()["loan_id"] == loan["id"]
+    assert r.get_json()["fine_amount"] == 0
+
+
+def test_fine_is_025_per_day_overdue(client):
+    book, member = make_book(client), make_member(client)
+    loan = checkout(client, book["id"], member["id"]).get_json()
+    store.loans[loan["id"]].due_date = date.today() - timedelta(days=10)
+    assert client.get(f"/loans/{loan['id']}/fine").get_json()["fine_amount"] == 2.5
+
+
+def test_fine_nonexistent_loan_returns_404(client):
+    assert client.get("/loans/999/fine").status_code == 404
+
+
+def test_fine_stops_growing_after_return(client):
+    """Expected to FAIL: fine uses today, not return_date (defect 4)."""
+    book, member = make_book(client), make_member(client)
+    loan = checkout(client, book["id"], member["id"]).get_json()
+    stored = store.loans[loan["id"]]
+    stored.due_date = date.today() - timedelta(days=10)
+    stored.return_date = date.today() - timedelta(days=6)   # returned 4 days late
+
+    fine = client.get(f"/loans/{loan['id']}/fine").get_json()["fine_amount"]
+    assert fine == 1.0   # 4 days * 0.25; observed 2.5
