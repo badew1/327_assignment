@@ -236,3 +236,58 @@ def test_fine_stops_growing_after_return(client):
 
     fine = client.get(f"/loans/{loan['id']}/fine").get_json()["fine_amount"]
     assert fine == 1.0   # 4 days * 0.25; observed 2.5
+
+
+
+
+# reservations
+def test_list_reservations_empty_initially(client):
+    assert client.get("/reservations").get_json() == []
+
+
+def test_create_reservation_returns_fields_and_is_listed(client):
+    book, member = make_book(client), make_member(client)
+    r = client.post("/reservations", json={
+        "book_id": book["id"], "member_id": member["id"]})
+    assert r.status_code == 201
+    res = r.get_json()
+    assert res["book_id"] == book["id"]
+    assert res["member_id"] == member["id"]
+    assert res["fulfilled"] is False
+
+    listed = client.get("/reservations").get_json()
+    assert [x["id"] for x in listed] == [res["id"]]
+
+
+def test_create_reservation_nonexistent_book_or_member_404(client):
+    book, member = make_book(client), make_member(client)
+    assert client.post("/reservations", json={
+        "book_id": 999, "member_id": member["id"]}).status_code == 404
+    assert client.post("/reservations", json={
+        "book_id": book["id"], "member_id": 999}).status_code == 404
+    assert client.get("/reservations").get_json() == []
+
+
+def test_filter_reservations_by_book_and_member(client):
+    b1, b2 = make_book(client, "One"), make_book(client, "Two")
+    m1, m2 = make_member(client, "Alice"), make_member(client, "Bob")
+    client.post("/reservations", json={"book_id": b1["id"], "member_id": m1["id"]})
+    client.post("/reservations", json={"book_id": b2["id"], "member_id": m2["id"]})
+
+    by_book = client.get(f"/reservations?book_id={b2['id']}").get_json()
+    assert len(by_book) == 1 and by_book[0]["book_id"] == b2["id"]
+
+    by_member = client.get(f"/reservations?member_id={m1['id']}").get_json()
+    assert len(by_member) == 1 and by_member[0]["member_id"] == m1["id"]
+
+
+def test_reserved_book_cannot_be_checked_out_by_another_member(client):
+    """Expected to FAIL: checkout ignores reservations (defect 5, R3)."""
+    book = make_book(client, total_copies=1)
+    alice, bob, carol = (make_member(client, n) for n in ("Alice", "Bob", "Carol"))
+    loan = checkout(client, book["id"], alice["id"]).get_json()
+    client.post("/reservations", json={"book_id": book["id"], "member_id": bob["id"]})
+    client.put(f"/loans/{loan['id']}/return")
+
+    r = checkout(client, book["id"], carol["id"])   # Bob is next in line
+    assert r.status_code in (400, 409)
