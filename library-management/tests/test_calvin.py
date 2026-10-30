@@ -291,3 +291,35 @@ def test_reserved_book_cannot_be_checked_out_by_another_member(client):
 
     r = checkout(client, book["id"], carol["id"])   # Bob is next in line
     assert r.status_code in (400, 409)
+
+
+    # checkout validation enhancement
+def test_rejected_checkout_leaves_state_unchanged(client):
+    book = make_book(client, total_copies=1)
+    r = checkout(client, book["id"], 999)
+    assert r.status_code == 404
+    assert available(client, book["id"]) == 1
+    assert client.get("/loans").get_json() == []
+
+
+def test_checkout_non_integer_ids_return_400(client):
+    book = make_book(client)
+    member = make_member(client)
+    r = client.post("/loans", json={"book_id": "abc", "member_id": member["id"]})
+    assert r.status_code == 400
+    r = client.post("/loans", json={"book_id": book["id"], "member_id": None})
+    assert r.status_code == 400
+    assert client.get("/loans").get_json() == []
+
+
+def test_two_copy_book_allows_two_checkouts_then_rejects_third(client):
+    book = make_book(client, total_copies=2)
+    m1, m2, m3 = (make_member(client, n) for n in ("Alice", "Bob", "Carol"))
+    assert checkout(client, book["id"], m1["id"]).status_code == 201
+    assert checkout(client, book["id"], m2["id"]).status_code == 201
+    assert available(client, book["id"]) == 0
+
+    r = checkout(client, book["id"], m3["id"])
+    assert r.status_code == 400
+    assert available(client, book["id"]) == 0
+    assert len(client.get("/loans").get_json()) == 2
