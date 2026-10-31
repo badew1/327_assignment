@@ -13,13 +13,40 @@ loans_bp = Blueprint("loans", __name__, url_prefix="/loans")
 @loans_bp.route("", methods=["GET"])
 def list_loans():
     results = list(store.loans.values())
-    member_id = request.args.get("member_id", type=int)
-    book_id = request.args.get("book_id", type=int)
+
+    try:
+        member_id = _parse_optional_id("member_id")
+        book_id = _parse_optional_id("book_id")
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    status = request.args.get("status", "all").lower()
+    if status not in {"all", "active", "returned"}:
+        return jsonify(
+            {"error": "status must be one of: all, active, returned"}
+        ), 400
+
     if member_id is not None:
-        results = [l for l in results if l.book_id == member_id]
+        results = [loan for loan in results if loan.member_id == member_id]
     if book_id is not None:
-        results = [l for l in results if l.book_id == book_id]
-    return jsonify([l.to_dict() for l in results])
+        results = [loan for loan in results if loan.book_id == book_id]
+    if status == "active":
+        results = [loan for loan in results if loan.return_date is None]
+    elif status == "returned":
+        results = [loan for loan in results if loan.return_date is not None]
+
+    return jsonify([loan.to_dict() for loan in results])
+
+
+def _parse_optional_id(name):
+    raw_value = request.args.get(name)
+    if raw_value is None:
+        return None
+
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be an integer") from error
 
 
 @loans_bp.route("", methods=["POST"])

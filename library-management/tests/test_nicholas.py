@@ -304,3 +304,100 @@ def test_checkout_rejects_unknown_member_without_changing_book_state(client):
         client.get("/loans").get_json(),
     )
     assert observed == (404, 1, [])
+
+
+def test_member_loan_history_separates_active_and_returned_loans(client):
+    """A member can distinguish current loans from returned loan history."""
+    member = create_member(client)
+    other_member = create_member(
+        client,
+        name="Jordan Patel",
+        email="jordan.patel@example.com",
+    )
+    active_book = create_book(client, title="Active Loan", isbn="active")
+    returned_book = create_book(client, title="Returned Loan", isbn="returned")
+    other_book = create_book(client, title="Other Member", isbn="other")
+
+    active_loan = client.post(
+        "/loans",
+        json={"book_id": active_book["id"], "member_id": member["id"]},
+    ).get_json()
+    returned_loan = client.post(
+        "/loans",
+        json={"book_id": returned_book["id"], "member_id": member["id"]},
+    ).get_json()
+    client.post(
+        "/loans",
+        json={"book_id": other_book["id"], "member_id": other_member["id"]},
+    )
+    client.put(f"/loans/{returned_loan['id']}/return")
+
+    active_response = client.get(
+        f"/loans?member_id={member['id']}&status=active"
+    )
+    returned_response = client.get(
+        f"/loans?member_id={member['id']}&status=returned"
+    )
+    history_response = client.get(f"/loans?member_id={member['id']}")
+
+    assert active_response.status_code == 200
+    assert active_response.get_json() == [active_loan]
+    assert returned_response.status_code == 200
+    assert returned_response.get_json()[0]["id"] == returned_loan["id"]
+    assert returned_response.get_json()[0]["return_date"] == date.today().isoformat()
+    assert [loan["id"] for loan in history_response.get_json()] == [
+        active_loan["id"],
+        returned_loan["id"],
+    ]
+    assert all(loan["due_date"] for loan in history_response.get_json())
+
+
+def test_member_and_book_loan_filters_can_be_combined(client):
+    """Combined filters return only a matching member-book relationship."""
+    member = create_member(client)
+    other_member = create_member(
+        client,
+        name="Jordan Patel",
+        email="jordan.patel@example.com",
+    )
+    shared_book = create_book(client, total_copies=2)
+    first_loan = client.post(
+        "/loans",
+        json={"book_id": shared_book["id"], "member_id": member["id"]},
+    ).get_json()
+    client.post(
+        "/loans",
+        json={"book_id": shared_book["id"], "member_id": other_member["id"]},
+    )
+
+    response = client.get(
+        f"/loans?member_id={member['id']}&book_id={shared_book['id']}"
+        "&status=active"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == [first_loan]
+
+
+def test_invalid_loan_history_filters_return_400_without_changing_state(client):
+    """Invalid filter values are rejected without changing stored loans."""
+    book = create_book(client)
+    member = create_member(client)
+    loan = client.post(
+        "/loans",
+        json={"book_id": book["id"], "member_id": member["id"]},
+    ).get_json()
+
+    invalid_member = client.get("/loans?member_id=abc")
+    invalid_book = client.get("/loans?book_id=1.5")
+    invalid_status = client.get("/loans?status=overdue")
+
+    assert invalid_member.status_code == 400
+    assert invalid_member.get_json() == {"error": "member_id must be an integer"}
+    assert invalid_book.status_code == 400
+    assert invalid_book.get_json() == {"error": "book_id must be an integer"}
+    assert invalid_status.status_code == 400
+    assert invalid_status.get_json() == {
+        "error": "status must be one of: all, active, returned"
+    }
+    assert client.get("/loans").get_json() == [loan]
