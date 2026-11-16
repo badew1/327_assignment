@@ -1,8 +1,79 @@
 """Nicholas's Assignment 3 coverage tests for home, book, and member pages."""
 
-from datetime import date
+from datetime import date, timedelta
+from unittest.mock import patch
 
 import pytest
+
+from app import store
+
+
+@pytest.fixture
+def overdue_loan(client):
+    book_response = client.post(
+        "/books",
+        json={
+            "title": "A Wizard of Earthsea",
+            "author": "Ursula K. Le Guin",
+            "isbn": "9780547773742",
+            "total_copies": 1,
+        },
+    )
+    member_response = client.post(
+        "/members", json={"name": "Maya Chen", "email": "maya@example.com"}
+    )
+    assert book_response.status_code == 201
+    assert member_response.status_code == 201
+    book = book_response.get_json()
+    member = member_response.get_json()
+    loan_response = client.post(
+        "/loans", json={"book_id": book["id"], "member_id": member["id"]}
+    )
+    assert loan_response.status_code == 201
+    loan_id = loan_response.get_json()["id"]
+    store.loans[loan_id].due_date = date.today() - timedelta(days=1)
+    loan = store.loans[loan_id].to_dict()
+    book = client.get(f"/books/{book['id']}").get_json()
+    return loan, book, member
+
+
+def test_overdue_reminder_success_stub_reports_sent_without_changing_records(
+    client, monkeypatch, overdue_loan
+):
+    loan, book, member = overdue_loan
+    monkeypatch.setattr(
+        "app.routes.loans.send_notification",
+        lambda recipient, subject, message: True,
+    )
+
+    response = client.post(f"/loans/{loan['id']}/reminder")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"loan_id": loan["id"], "notified": True}
+    assert client.get("/loans").get_json() == [loan]
+    assert client.get("/books").get_json() == [book]
+    assert client.get("/members").get_json() == [member]
+
+
+def test_overdue_reminder_mock_receives_expected_recipient_subject_and_message(
+    client, overdue_loan
+):
+    loan, book, member = overdue_loan
+
+    with patch("app.routes.loans.send_notification", return_value=True) as notify:
+        response = client.post(f"/loans/{loan['id']}/reminder")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"loan_id": loan["id"], "notified": True}
+    notify.assert_called_once_with(
+        "maya@example.com",
+        "[City Library] Overdue reminder",
+        f'Hi Maya Chen, "A Wizard of Earthsea" was due on {loan["due_date"]}. '
+        "Please return it to the library.",
+    )
+    assert client.get("/loans").get_json() == [loan]
+    assert client.get("/books").get_json() == [book]
+    assert client.get("/members").get_json() == [member]
 
 
 def test_home_page_links_to_management_pages_without_changing_state(client):
