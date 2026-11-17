@@ -65,3 +65,36 @@ def test_ui_return_unknown_loan_changes_nothing(client):
     r = client.post("/ui/loans/999/return")
     assert r.status_code == 302
     assert store.books[book["id"]].available_copies == 1
+
+
+from datetime import date, timedelta
+from unittest.mock import patch
+
+
+def _overdue_loan(client):
+    book = client.post(
+        "/books",
+        json={"title": "Dune", "author": "Frank Herbert", "isbn": "9780441013593", "total_copies": 1},
+    ).get_json()
+    member = client.post(
+        "/members", json={"name": "Sam Lee", "email": "sam@example.com"}
+    ).get_json()
+    loan = client.post(
+        "/loans", json={"book_id": book["id"], "member_id": member["id"]}
+    ).get_json()
+    store.loans[loan["id"]].due_date = date.today() - timedelta(days=3)
+    return loan["id"], book["id"], member["id"]
+
+
+def test_reminder_failed_notification_returns_200_with_notified_false(client, monkeypatch):
+    loan_id, book_id, _ = _overdue_loan(client)
+    monkeypatch.setattr(
+        "app.routes.loans.send_notification", lambda recipient, subject, message: False
+    )
+
+    response = client.post(f"/loans/{loan_id}/reminder")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"loan_id": loan_id, "notified": False}
+    assert store.loans[loan_id].return_date is None
+    assert store.books[book_id].available_copies == 0
