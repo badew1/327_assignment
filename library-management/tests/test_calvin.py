@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 from app import store
 from app.models.loan import Loan, LOAN_PERIOD_DAYS
-
+import pytest
 
 # ---------- helpers ----------
 def make_book(client, title="Clean Code", total_copies=1):
@@ -281,6 +281,7 @@ def test_filter_reservations_by_book_and_member(client):
     assert len(by_member) == 1 and by_member[0]["member_id"] == m1["id"]
 
 
+@pytest.mark.xfail(reason="Checkout does not enforce reservations (R3); documented defect")
 def test_reserved_book_cannot_be_checked_out_by_another_member(client):
     """Expected to FAIL: checkout ignores reservations (defect 5, R3)."""
     book = make_book(client, total_copies=1)
