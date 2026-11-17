@@ -23,3 +23,19 @@ def test_loans_page_lists_existing_loans(client):
     r = client.get("/ui/loans")
     assert r.status_code == 200
     assert len(store.loans) == 1
+
+
+def test_ui_checkout_creates_loan_and_decrements_copies(client):
+    book, member = _book(client), _member(client)
+    r = client.post("/ui/loans", data={"book_id": book["id"], "member_id": member["id"]})
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/ui/loans")
+    assert len(store.loans) == 1
+    assert store.books[book["id"]].available_copies == 0
+
+
+def test_ui_checkout_unknown_book_creates_no_loan(client):
+    member = _member(client)
+    r = client.post("/ui/loans", data={"book_id": 999, "member_id": member["id"]})
+    assert r.status_code == 302
+    assert len(store.loans) == 0
