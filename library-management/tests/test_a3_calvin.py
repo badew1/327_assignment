@@ -98,3 +98,60 @@ def test_reminder_failed_notification_returns_200_with_notified_false(client, mo
     assert response.get_json() == {"loan_id": loan_id, "notified": False}
     assert store.loans[loan_id].return_date is None
     assert store.books[book_id].available_copies == 0
+
+
+def test_reminder_not_sent_for_loan_that_is_not_overdue(client):
+    loan_id, _, _ = _overdue_loan(client)
+    store.loans[loan_id].due_date = date.today() + timedelta(days=5)
+
+    with patch("app.routes.loans.send_notification") as notify:
+        response = client.post(f"/loans/{loan_id}/reminder")
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "Loan is not overdue"}
+    notify.assert_not_called()
+
+
+def test_reminder_not_sent_for_returned_loan(client):
+    loan_id, _, _ = _overdue_loan(client)
+    store.loans[loan_id].return_date = date.today()
+
+    with patch("app.routes.loans.send_notification") as notify:
+        response = client.post(f"/loans/{loan_id}/reminder")
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "Loan already returned"}
+    notify.assert_not_called()
+
+
+def test_reminder_not_sent_for_unknown_loan(client):
+    with patch("app.routes.loans.send_notification") as notify:
+        response = client.post("/loans/999/reminder")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Loan not found"}
+    notify.assert_not_called()
+
+
+def test_reminder_not_sent_when_member_is_missing(client):
+    loan_id, _, member_id = _overdue_loan(client)
+    del store.members[member_id]
+
+    with patch("app.routes.loans.send_notification") as notify:
+        response = client.post(f"/loans/{loan_id}/reminder")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Member not found"}
+    notify.assert_not_called()
+
+
+def test_reminder_not_sent_when_book_is_missing(client):
+    loan_id, book_id, _ = _overdue_loan(client)
+    del store.books[book_id]
+
+    with patch("app.routes.loans.send_notification") as notify:
+        response = client.post(f"/loans/{loan_id}/reminder")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Book not found"}
+    notify.assert_not_called()
