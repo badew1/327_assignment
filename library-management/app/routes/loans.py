@@ -137,11 +137,7 @@ def get_fine(loan_id):
     loan = store.loans.get(loan_id)
     if loan is None:
         return jsonify({"error": "Loan not found"}), 404
-
-    # BUG: always uses date.today() as the end date, even when the book has
-    # already been returned. A returned loan should use loan.return_date so
-    # the fine is fixed at the moment of return — but that line is missing here.
-    end_date = date.today()
+    end_date = loan.return_date or date.today()
     days_overdue = max(0, (end_date - loan.due_date).days)
     fine_amount = round(days_overdue * FINE_PER_DAY, 2)
 
